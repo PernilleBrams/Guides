@@ -1,0 +1,337 @@
+---
+title: "Guide - Tidymodels. "Gentle introduction to tidymodels""
+author: "PernilleB"
+date: "10/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Tidymodels focus on making the tasks around fitting the model much easier. Those tasks are 
+*data preprocessing*
+and
+*results validation*
+
+Tidymodels as the "model" step in the process of import --> tidy --> transform --> (:visualize --> model:) --> share, has substeps of the packages
+
+SO IT GOES: 
+*data preprocessing*:
+rsample: different types of re-samples
+recipes: transformations for model data pre-processing
+
+*train*:
+parnip: a common interface for model creation
+
+*validate*:
+yardstick: measure model performance
+
+# LETS GO
+```{r}
+
+pacman::p_load(tidymodels, ranger, randomForest) #also loads tidyverse, ggplot2, dplyr
+
+```
+
+# Reading in data to have a look
+```{r}
+iris_split <- initial_split(iris, prop = 0.6) #splitting iris dataset into 60% training set, 40% testing set
+
+iris_split #ANALYSIS = 90, ASSESS = 60, TOTAL = 150
+
+```
+
+To access observations reserved for training, use training(). 
+To access observations reserved for testing, use testing().
+
+Like so:
+```{r}
+
+iris_split %>% 
+  training() %>% 
+  glimpse()
+
+iris_split %>% 
+  testing() %>% 
+  glimpse()
+
+```
+
+
+# Pre-process interface
+
+We want to create a recipe object using recipe(), prep() and steps.
+```{r}
+
+iris_recipe <- training(iris_split) %>% #taking training part of iris data
+  recipe(Species ~.) %>% 
+  step_corr(all_predictors()) %>% #removes variables that have large absolute correlations with other variables (for all predictors here)
+  step_center(all_predictors(), -all_outcomes()) %>% #normalizes all predictors - all outcomes to have a mean of 0. But what about the subtraction going on therE? 
+  step_scale(all_predictors(), -all_outcomes()) %>% 
+  prep() #execute transformations on top of training data. Ved ik hvad det betyder
+
+iris_recipe
+
+```
+
+The 'Operations' part says what was done to the data. 
+We can see that Petal.Length was removed, for example.
+
+# Execute pre-processing
+Transforming testing data using the exact same steps, weight, categorization used to pre-process the training data. 
+
+```{r}
+iris_testing <- iris_recipe %>% 
+  bake(testing(iris_split))
+
+glimpse(iris_testing)
+
+```
+
+Both sets are now preprocessed. 
+
+To load the prepared training data into a variable, we use juice().
+```{r}
+iris_training <- juice(iris_recipe)
+
+glimpse(iris_training)
+
+```
+
+# Model training
+tidymodels provides a single set of functions and arguments to define a model. Then fits the model against the requested modeling package. 
+
+First trying the Random Forest model, running the model on top of the juiced trained data.
+```{r}
+# ranger - a 100 trees, uncorrelated, classification of Iris species
+iris_ranger <- rand_forest(trees = 100, mode = "classification") %>%
+  set_engine("ranger") %>%
+  fit(Species ~ ., data = iris_training)
+
+# randomForest
+iris_rf <-  rand_forest(trees = 100, mode = "classification") %>%
+  set_engine("randomForest") %>%
+  fit(Species ~ ., data = iris_training)
+
+```
+
+# Predictions
+Instead of a vector, *predict()* ran against a *parsnip* model returns a *tibble*. The baked testing data is used here - preprocessed data.
+
+```{r}
+
+# We want to use predict on these two - just calling them for overview here:
+iris_ranger
+glimpse(iris_testing)
+
+# Predict
+predict(iris_ranger, iris_testing) #so here, we take the model iris_ranger, which is a random forest model of 100 trees fit to our training data. It wants to classify Species of flower. We take iris_ranger, and predict from this on the iris_testing data to see how well it fits
+
+```
+
+We can add these predictions to the "baked" data set, which was the datapreprocessed testing one: 
+```{r}
+iris_ranger %>% 
+  predict(iris_testing) %>% # we take iris_ranger rand.forest model and predict on iris_testing data to see how good it is
+  bind_cols(iris_testing) %>% #take the columns of predicitons and bind it to the iris testing data. It will call it .pred_class, I can rename
+  rename("Predicted.Class" = ".pred_class") %>% 
+  glimpse()
+
+```
+
+# Model validation
+Time to validate the model - measure how well it performs.
+
+```{r}
+
+iris_ranger %>% 
+  predict(iris_testing) %>% 
+  bind_cols(iris_testing) %>% 
+  rename("Predicted.Class" = ".pred_class") %>% 
+  metrics(truth = Species, estimate = Predicted.Class) #actual results = truth, what the model predicted = estimate
+
+```
+
+Gives us the results: 
+A tibble: 2 x 3
+  .metric  .estimator .estimate
+  <chr>    <chr>          <dbl>
+1 accuracy multiclass     0.933
+2 kap      multiclass     0.900
+
+Meaning an estimate of 93% accuracy.
+
+We can measure the same metrics against the randomForest model this time instead of the ranger, which we have run with thus far: 
+```{r}
+iris_rf %>% 
+  predict(iris_testing) %>% 
+  bind_cols(iris_testing) %>% 
+  rename("Predicted.Class" = ".pred_class") %>%
+  metrics(truth = Species, estimate = Predicted.Class)
+```
+
+Gives us the results: 
+A tibble: 2 x 3
+  .metric  .estimator .estimate
+  <chr>    <chr>          <dbl>
+1 accuracy multiclass     0.917
+2 kap      multiclass     0.875
+
+Meaning an estimate of 91.7% accuracy.
+
+# Per Classifier Metrics - probabilities
+We want to obtain the probability for each possible predicted value by setting type argument to prob.
+This returns a tibble with as many variables as there are possible predicted values. 
+
+Their name will default to the original value name, prefixed with .pred_ - this time I wont rename:
+
+```{r}
+
+iris_ranger %>% 
+  predict(iris_testing, type = "prob")
+```
+
+Gives us the results: 
+Rows: 60
+Columns: 3
+$ .pred_setosa     <dbl> 0.8689008, 0.9179484, 0.939948…
+$ .pred_versicolor <dbl> 0.110853175, 0.062527778, 0.05…
+$ .pred_virginica  <dbl> 0.020246032, 0.019523810, 0.00…
+
+It predicts 60 times (because we have 60 observations in the iris_testing dataset)
+Meaning that the probability of the class being Setosa is for example 86% in the first observation. 
+
+We can again use bind_cols to append this to the baked testing data set:
+```{r}
+
+iris_probs <- iris_ranger %>% 
+  predict(iris_testing, type = "prob") %>% 
+  bind_cols(iris_testing)
+
+iris_probs %>% 
+  glimpse()
+
+```
+
+Everything is gathered now. 
+
+# Gain curve
+We can now calculate curve methods. What is that? 
+*Has to do with cumulative gain and lift charts*
+
+*It is a visual method to determine how effect our model is when compared to the results we would expect without a model. E.g.:*
+
+Basically, we want to visualize to compare a predictive model (iris_ranger) to an actual outcome (iris_testing). In this case, the gain 
+
+- Without a model, if I were to advertise to a random 10 to capture 10 advertised to my entire customer base. Given a model that predicts WHICH customers are more likely to respond, the hope is we can more accurately target 10\\>10\. (don't quite know what this means) 
+
+```{r}
+gain_curve <- iris_probs %>% 
+  gain_curve(Species, .pred_setosa:.pred_virginica) %>% 
+  glimpse()
+
+gain_curve
+
+```
+
+And we can visualize this: 
+```{r}
+
+gain_curve %>% 
+  autoplot()
+```
+
+That was a gain curve.
+
+# Roc curve
+Next, we can see an example of ROC_curve, which is a measure of performance. The area under the ROC curve is a measure of *how well a parameter can distinguish between groups, fx SETOSA or VERSICOLOR or VIRGINICA.
+
+ROC curve shows relationship between sensitivity (true positive rate) and specificity (1-false positive rate).
+
+A perfect ROC curve vill go straight up at 0 and follow to the right...
+
+```{r}
+
+roc_curve <- iris_probs %>% 
+  roc_curve(Species, .pred_setosa:.pred_virginica) %>% 
+  glimpse()
+
+roc_curve %>% 
+  autoplot()
+```
+
+Gives us the results: 
+SETOSA is a perfect curve...
+
+The parameter we use here is really good at distinguishing between the groups. 
+
+To measure combined single predicted value and the probability of EACH possible value, combine the two prediction modes with and without prob type. 
+
+We can use select for this: 
+
+```{r}
+t <- predict(iris_ranger, iris_testing, type = "prob") %>%
+  bind_cols(predict(iris_ranger, iris_testing)) %>% 
+  bind_cols(select(iris_testing, Species)) %>% 
+  glimpse()
+
+```
+
+We can pipe this table of probabilities of each class + the class given, in metrics(), which we used to measure performance of "mode". We want pred.class to be the estimate now. 
+
+```{r}
+
+t %>% 
+  metrics(truth = Species, .pred_setosa:.pred_virginica, estimate = .pred_class) #:: from setosa to virginica
+
+```
+
+A tibble: 4 x 3
+  .metric     .estimator .estimate
+  <chr>       <chr>          <dbl>
+1 accuracy    multiclass     0.933
+2 kap         multiclass     0.900
+3 mn_log_loss multiclass     0.312
+4 roc_auc     hand_till      0.954
+
+
+
+# FUNCTIONS USED IN THIS DOC:
+*initial_split():*
+- separates data set into training and testing set. By default holds 3/4 of data for training and rest for testing. That can be passed by passing the prop argiment. 
+- it creates an rplit object, not a dataframe
+
+*recipes package:*
+- package recipes (functions that start, execute, transform are named after cooking actions)
+- *recipe()* starts a new set of transformations to be applied, similar to the ggplot() command and its main argument is the model's syntax
+- *prep()* executes transformations on top of the data that is supplied, typically, the training data
+- *bake()*, executing the preprocessing
+- *juice()*, extracts the data from the recipe object
+
+Data transformation is a step each time you do something. 
+*step_corr()*: removes variables that have large abs. correlations with other variables
+*step_center()*: normalizes numeric data to have a mean = 0
+*step_scale()*: normalizes numeric data to have a standard deviation of 1
+
+Step can be applied to specific variable, groups of variables or all variables.
+*step_corr() only used to analyze the predictor variables, we can say step_corr(all_predictors()).*
+
+*rand_forest()* function used to initialize a Random Forest model. Defining number of trees, use the *trees* argument. Execute model with fit(). 
+
+*ranger()* funciton used to ^. use set_engine() function. Execute model with fit(). 
+
+*predict()*: 
+- The main goal of linear regression is to predict an outcome value on the basis of one or many predictors.
+- With predict() you can predict outcome variable, fx length of petal, or height, form new observations. So, it goes like: 
+1. have some data
+2. fit model to the data
+3. using the above model, we can predict new data with our model's estimates
+4. then you have something to put in x's places in the model, fx speed distance, and then your outcome is stopping distance. 
+then you can see what your stopping distance will be driving 50 mph per hour, fx - putting 50 mph in your model is then your way to predict new data. 
+
+*metrics()*: Used to measure the performance of mode. Truth = actual values, what you have, here, it is Species. Estimate = what the model predicts, so here, it is Predicted.Class because it's what we try to predict/generate new data on. 
+# TERMS
+Ranger and randomForest packages fit random forest models. 
+ranger() function, define number of trees, use num.trees. 
+randomForest, define number of treesm, we use ntree. 

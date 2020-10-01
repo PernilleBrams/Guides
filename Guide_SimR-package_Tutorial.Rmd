@@ -1,0 +1,252 @@
+---
+title: "SimR-package Tutorial"
+author: "PernilleB"
+date: "9/24/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## TUTORIAL LINK: 
+https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.12504
+## LIBRARIES
+```{r}
+
+pacman::p_load(simr,tidyverse,tidytuesdayR,dplyr,lme4)
+?tidy
+```
+
+## DATASET
+Simdata is included in the simr package. The dataset is representative of environmental monitoring data.
+
+*The response variable*: z (e.g. 'bird abundance' - so how many birds) measured at 10 levels of the continuous fixed effect variable.
+
+*Fixed effect variable*: x (e.g. study year) for 3 groups (e.g. study site - where the study took place).
+
+
+## FITTING A MODEL
+We fit a Poisson mixed effects model. Poisson because it is count data. 
+We add:
+*Random intercept*: Each group (g) has its own intercept, but the groups share a common trend.
+
+```{r}
+
+model1 <- glmer(z ~ x + (1|g), family = "poisson", data = simdata)
+
+ggplot(aes(x = x, y = z, col = g), data = simdata) + 
+  geom_point() +
+  geom_smooth() + 
+  ggtitle("Development in abundance of birds over study years for three study sites") + labs(x = "Year of study", y = "Abundance of birds")
+
+summary(model1)
+```
+
+## OUTPUT
+Generalized linear mixed model fit by maximum likelihood (Laplace
+  Approximation) [glmerMod]
+ Family: poisson  ( log )
+Formula: z ~ x + (1 | g)
+   Data: simdata
+
+     AIC      BIC   logLik deviance df.resid 
+   109.0    113.2    -51.5    103.0       27 
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-1.28918 -0.41836 -0.03916  0.57284  1.29631 
+
+Random effects:
+ Groups Name        Variance Std.Dev.
+ g      (Intercept) 0.08345  0.2889  
+Number of obs: 30, groups:  g, 3
+
+Fixed effects:
+            Estimate Std. Error z value Pr(>|z|)    
+(Intercept)  1.54079    0.27173   5.670 1.43e-08 ***
+x           -0.11481    0.03955  -2.903   0.0037 ** 
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Correlation of Fixed Effects:
+  (Intr)
+x -0.666
+
+
+
+
+## INTERPRETING THE OUTPUT
+We want to infer about the trend for x, the study year for example. 
+*Estimated effect size*: for x, this is -0.11481, significant at 0.01 level using default z-test. 
+
+This means that for each year the study was done, the abundance of birds decreased. 
+
+A proper analysis would have e.g. a larger number of groups.
+
+
+
+## REPLICATING THE STUDY
+If the effect is real, would we have enough power to expect a positive result? 
+
+## SPECIFY EFFECT SIZE
+One has to consider what kind of effect size one is interested in. 
+
+Power generally increases with effect size, because larger effects are easier to detect. 
+
+We will consider the power to detect a slope of -0.05 for the decrease in abundance of birds. The fixed effects within the fitted glmer() model can be edited with *fixef*.
+
+We thus want to change the size of the fixed effect to set 'the goal' we are looking for - to see how much power we need to detect that.
+(One can also change the random effect parameters or residual variance)
+
+
+## CHANGING THE SIZE OF THE FIXED EFFECT MANUALLY 
+
+```{r}
+
+# What is the current effect size?
+fixef(model1)["x"]
+
+# Change to -0.05
+fixef(model1)["x"] <- -0.05
+
+```
+
+
+## RUNNING THE POWER ANALYSIS
+The model and effect size of -0.05 has now been specified. The calculations are based on Monte Carlo simulations, and therefore the results might be slightly different than what they are in this tutorial:
+
+```{r}
+
+powerSim(model1)
+
+```
+
+The power to reject the H0 of zero trend in x is about 32.10%.
+
+This is NOT enough; we traditionally want 80%. 
+
+In practice, the z-test might not be suitable for such a small example - instead, a parametric bootstrap test might be better for the final analysis. Z-test are faster though, and suitable for initial exploratory work during power analysis. 
+
+## INCREASING SAMPLE SIZE
+We just got a low power. A pilot study will often not have enough power to detect a small effect, but larger sample size can help here.
+
+This study had 10 observations for x, representing fx study years 1-10. In this step, we will try and increase x to signify 20 years, and see what the effect of that is.
+
+The *along* argument in extend specifies which variable it is that we extend. *N* specifies how many levels to replace it with. The model2 that we extend will now have x values from 1-20 in 3 groups (g) 
+
+Model1 had 30 rows. Model2 has 60 rows.
+```{r}
+# We want to extend the model here along "x", because it is x/years that we want to increase:
+model2 <- extend(model1, along = "x", n = 20) 
+
+# We run the power simulation again to find the power of this tweak:
+powerSim(model2)
+
+```
+
+We get a power of 96% when observations of bird abundance were taken at 20 values of x. This is too much - this means that our test/hypothesis has 96% probability of rejecting H0 when it is supposed to - when it is false.
+
+## POWER ANALYSIS AT A RANGE OF SAMPLE SIZES
+When data collection is expensive, we only want to collect as much data as needed to achieve certain level of power. Remember though to include data as some will need exclusion.
+
+## IDENTIFYING THE MINIMUM SAMPLE SIZE REQUIRED
+Before, we found too much power when observations of bird abundance were taken at 20 values of variable x, study year. We can reduce the number while keeping the power above the arbitrary 80% threshold.
+
+```{r}
+
+# We use the powerCurve function to calculate power over a range of sample sizes. Model2 is specified to have 20. Then it goes down from there.
+pc2 <- powerCurve(model2)
+
+print(pc2)
+
+```
+
+The results here were based on fitting the model to 10 different automatically chosen subsets. The smallest subset uses just the first 3 years (9 observations), and the largest subset uses all the 20 hypothetical study years, that is, 60 rows of data. 
+
+*This analysis suyggests the study would have to run for 16 years for it to have ~80% power to detect an effect of the specified size, which was set to -0.05.*
+
+## PLOT of PC2
+Power(+-95% CI) to detect a fixed effect with size -0.05 calculated over a range of sample sizes using the powerCurve function:
+
+```{r}
+
+plot(pc2)
+
+```
+
+
+We can see on the plot, that the power to detect a trend in x increases with sample size. 16 years should be good to detect the effect sought with 80% power.
+
+
+## VARYING NUMBER AND SIZE OF GROUPS
+Maybe we can't increase the number of values for x observed. E.g. if x is study year, we might not want to wait 16 years for the reuslts. We could increase the number of sudy sites instead or number of measurements at each site.
+
+We will now return to our original model1 with 10 study years:
+```{r}
+
+# We extend model3 along the groups, replaces 3 with 15 - meaning we go now to collect data from 15 sites instead of 3
+model3 <- extend(model1, along = "g", n = 15) 
+
+# We use powerCurve function to calculate power over a range of different sample sizes
+
+pc3 <- powerCurve(model3, along = "g")
+  
+print(pc3)
+
+```
+Main change here is that we passed the variable g to the *along* argument. 
+
+## PLOT of PC3
+Power(+-95 CI) to detect a fixed effect with size -0.05 calculated over a range of sample sizes (but group sizes, really ( which is number of study sites)) using the powerCurve function:
+
+```{r}
+
+plot(pc3)
+
+```
+
+To reach 80% power, we will need at least 11 sites (g of 11) with model1's specifications of 10 study years span.
+
+
+## INCREASING SIZE WITHIN GROUPS
+We can replace *along* to extend and powercurve with the *within* argument to increase how big our groups are. Each group (study site) right now only has ONE observation at each level of x (study year) and g (study site). We can extend and say that instead, we want 5 observations pr site pr year.
+
+This means we need to increase the group sizes from 1 to 5. 
+```{r}
+
+# For x (study year) and g (study site), increase the size from 1 to 5
+model4 <- extend(model1, within = "x+g", n = 5)
+
+# The 'breaks' argument overrides default and gives us 1 through 5 observation pr combination of x and g (year and study site)
+pc4 <- powerCurve(model4, within = "x+g", breaks = 1:5)
+
+print(pc4)
+
+```
+
+## PLOT of PC4
+Power(+-95 CI) to detect a fixed effect with size -0.05 calculated over a range of sample sizes (but really, it is the number of observations within combination of x and g - study year and study site) using the powerCurve function:
+
+```{r}
+
+plot(pc3)
+
+```
+
+To reach 80% power, we will need at least 4 observations per site (g) per year (x) with model1's specifications of 10 study years span. This means going to a site pr year and take 4 counts.
+
+
+
+## OTHER THINGS 
+PowerSim function assumes default settings, but we can tweak. 
+
+Users may alter the random number of seed for reproducible results, or the nominal confidence level (alpha), or modify the nsim argument from its default setting of 1000.
+
+We can increase the precision of our power estimate by increasing number of simulations.
+
+By default, simR ests the first fixed effect in a model. But we can use the *test* argument to test multiple fixed effects and single or more random effects. 
+
+
+
+
